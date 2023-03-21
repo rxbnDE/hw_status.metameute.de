@@ -1,122 +1,137 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
-// #include <DNSServer.h>
 #ifdef ESP32
-// #include <WiFi.h>
-// #include <AsyncTCP.h>
+#include <WiFi.h>
+#include <WiFiMulti.h>
+#include <HTTPClient.h>
+WiFiMulti wifiMulti;
 #elif defined(ESP8266)
-// #include <ESP8266WiFi.h>
-// #include <ESPAsyncTCP.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <ESP8266HTTPClient.h>
+ESP8266WiFiMulti wifiMulti;
 #endif
-// #include "ESPAsyncWebServer.h"
 
 #define LED_PIN 4
 #define SWITCH_PIN 5
-#define OPEN true
-#define CLOSED false
+#define OPEN 1
+#define CLOSED 0
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(1, LED_PIN, NEO_RGB);
-
-// DNSServer dnsServer;
-// AsyncWebServer server(80);
+Adafruit_NeoPixel led = Adafruit_NeoPixel(1, LED_PIN, NEO_RGB);
 
 bool doorState = CLOSED;
+bool lastSend = doorState;
 bool interrupts = true;
+bool freshWIFI = true;
+int counter = 0;
 volatile boolean interrupt_flag = false;
+uint32_t color = led.Color(0,255,255);
 
-uint32_t Wheel(byte WheelPos)
-{
-    WheelPos = 255 - WheelPos;
-    if (WheelPos < 85)
-    {
-        return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
-    }
-    if (WheelPos < 170)
-    {
-        WheelPos -= 85;
-        return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
-    }
-    WheelPos -= 170;
-    return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+String ssid = "";
+String pswd = "";
+const char* apiHOST = "https://status.metameute.de";
+const char* apiPATH = "/setState?token=";
+const char* apiTOKEN = "SECRET";
+
+IRAM_ATTR void changeState() {
+	if (interrupt_flag) {
+		return;
+	}
+
+	interrupt_flag = true;
+
+	
+	doorState = digitalRead(SWITCH_PIN) == HIGH;
+
+
+	interrupt_flag = false;
 }
 
-ICACHE_RAM_ATTR void changeState() {
-    if (interrupt_flag) {
-        return;
-    }
-
-    interrupt_flag = true;
-
-    if (digitalRead(SWITCH_PIN) == HIGH) {
-        strip.setPixelColor(0, strip.Color(0, 255, 0));
-        for (byte i = 255; i > 30; i--) {
-            strip.setBrightness(i);
-            strip.show();
-            // delay(1);
-        }
-    } else {
-        strip.setPixelColor(0, strip.Color(255, 0, 0));
-        for (byte i = 255; i > 30; i--) {
-            strip.setBrightness(i);
-            strip.show();
-            delay(1);
-        }
-    }
-    
-    interrupt_flag = false;
+void flipDoorState() {
+	HTTPClient http;
+	WiFiClientSecure client;
+	client.setInsecure();
+	String path = apiHOST;
+	path.concat(apiPATH);
+	path.concat(apiTOKEN);
+	path.concat("&value=");
+	path.concat((doorState) ? "true": "false");
+	
+	if(http.begin(client, path)) {
+		int httpCode = http.GET();
+		counter++;
+		Serial.println(counter);
+		Serial.printf("httpCode: %d\n", httpCode);
+		Serial.println(path);
+		if(httpCode > 0) {
+			if(httpCode == 200) {
+				String payload = http.getString();
+				Serial.println(payload);
+			}
+		} else {
+			Serial.println("HTTP-Connection lost!");
+		}
+		http.end();
+	} else {
+		Serial.println("HTTP-Connection cannot be established.");
+	}	
 }
-
-
-// class CaptiveRequestHandler : public AsyncWebHandler
-// {
-// public:
-//     CaptiveRequestHandler() {}
-//     virtual ~CaptiveRequestHandler() {}
-
-//     bool canHandle(AsyncWebServerRequest *request)
-//     {
-//         // request->addInterestingHeader("ANY");
-//         return true;
-//     }
-
-//     void handleRequest(AsyncWebServerRequest *request)
-//     {
-//         AsyncResponseStream *response = request->beginResponseStream("text/html");
-//         response->print("<!DOCTYPE html><html><head><title>Captive Portal</title></head><body>");
-//         response->print("<p>This is out captive portal front page.</p>");
-//         response->printf("<p>You were trying to reach: http://%s%s</p>", request->host().c_str(), request->url().c_str());
-//         response->printf("<p>Try opening <a href='http://%s'>this link</a> instead</p>", WiFi.softAPIP().toString().c_str());
-//         response->print("</body></html>");
-//         request->send(response);
-//     }
-// };
 
 void setup()
 {
-    pinMode(SWITCH_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(SWITCH_PIN), changeState, CHANGE);
+	Serial.begin(9600);
+	delay(10);
+	Serial.println('\n');
 
-    // setup led
-    strip.begin();
-    strip.setBrightness(10);
-    strip.show(); // Initialize all pixels to 'off'
+	pinMode(SWITCH_PIN, INPUT_PULLUP);
+	attachInterrupt(digitalPinToInterrupt(SWITCH_PIN), changeState, CHANGE);
 
-    // // your other setup stuff...
-    // WiFi.softAP("esp-captive");
-    // dnsServer.start(53, "*", WiFi.softAPIP());
-    // server.addHandler(new CaptiveRequestHandler()).setFilter(ON_AP_FILTER); // only when requested from AP
-    // // more handlers...
-    // server.begin();
+	doorState = digitalRead(SWITCH_PIN) == HIGH;
+
+	// setup led
+	led.begin();
+	led.setBrightness(10);
+	led.setPixelColor(0, color);
+	led.show();
+
+	// CONNECT
+	WiFi.mode(WIFI_STA);
+
+	wifiMulti.addAP("luebeck.freifunk.net");
+	wifiMulti.addAP("WLAN-XIE8N1", "YUNGYUNG789!");
 }
 
 void loop()
 {
-    // dnsServer.processNextRequest();
-    delay(500);
-    // strip.setBrightness(100);
-    // for (byte i = 0; i < 255; i++) {
-    //     strip.setPixelColor(0, Wheel(i));
-    //     strip.show();
-    //     delay(10);
-    // }
+	// Maintain WiFi connection
+	if (wifiMulti.run(5000) == WL_CONNECTED) {
+		if(freshWIFI) {
+				Serial.println(".");
+				Serial.println("Connection established");
+				Serial.println(WiFi.localIP());
+				freshWIFI = false;
+		}
+
+		if (doorState) {
+			color = led.Color(0, 255, 0);
+		} else {
+			color = led.Color(255, 0, 0);
+		}
+		led.setBrightness(50);
+		led.setPixelColor(0, color);
+		led.show();
+		if(doorState != lastSend) {
+			lastSend = doorState;
+			flipDoorState();
+			delay(300);
+		}
+		delay(50);
+	} else {
+		Serial.println("Not connected");
+		freshWIFI = true;
+		color = led.Color(0, 255, 255);
+		led.setBrightness(20);
+		led.setPixelColor(0, color);
+		led.show();
+	}
 }
